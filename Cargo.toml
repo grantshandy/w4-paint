@@ -1,0 +1,16 @@
+[package]
+name = "w4-paint"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+buddy-alloc = "0.4"
+
+[profile.release]
+opt-level = "z"
+lto = true
