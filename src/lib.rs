@@ -8,17 +8,20 @@ use core::{arch::wasm32, panic};
 
 use alloc::vec::Vec;
 use buddy_alloc::{BuddyAllocParam, FastAllocParam, NonThreadsafeAlloc};
-use palette::{set_draw_colors, set_palette, Palette};
-use wasm::{rect, trace, MOUSE_BUTTONS, MOUSE_X, MOUSE_Y, SCREEN_SIZE};
 
-mod palette;
-mod wasm;
+// platform constants
+pub const SCREEN_SIZE: u32 = 160;
 
-// app state
-const DEFAULT_PALETTE: Palette = [0x211e20, 0x555568, 0xa0a08b, 0xe9efec];
-static mut POINTS: Vec<(u8, u8)> = Vec::new();
+// memory addresses
+pub static mut PALETTE: *mut [u32; 4] = 0x04 as *mut [u32; 4];
+pub const DRAW_COLORS: *mut u16 = 0x14 as *mut u16;
+pub static mut FRAMEBUFFER: *mut [u8; 6400] = 0xa0 as *mut [u8; 6400];
 
-// allocator
+pub const MOUSE_X: *const i16 = 0x1a as *const i16;
+pub const MOUSE_Y: *const i16 = 0x1c as *const i16;
+pub const MOUSE_BUTTONS: *const u8 = 0x1e as *const u8;
+
+// allocator bs
 const ALLOC_FAST_HEAP_SIZE: usize = 4 * 1024; // 4 KB
 const ALLOC_HEAP_SIZE: usize = 16 * 1024; // 16 KB
 const ALLOC_LEAF_SIZE: usize = 16;
@@ -36,56 +39,84 @@ static ALLOC: NonThreadsafeAlloc = unsafe {
 
 #[panic_handler]
 fn panic_handler(_panic_info: &panic::PanicInfo<'_>) -> ! {
-    trace("rust panic error");
-
-    #[cfg(debug_assertions)]
-    if let Some(cause) = _panic_info.payload().downcast_ref::<&str>() {
-        trace(cause);
-    }
-
     wasm32::unreachable()
 }
 
+// application specifics
+static mut POINTS: Vec<(u8, u8)> = Vec::new();
+const HEADER_HEIGHT: u8 = 17;
+const BLOCK_SIZE: u8 = 4;
+const TITLE: &str = "Paint!";
+const BUTTON: &str = "Clear";
+
 #[no_mangle]
-fn start() {
-    set_palette(DEFAULT_PALETTE);
+unsafe fn start() {
+    *PALETTE = [0xd0d058, 0xa0a840, 0x708028, 0x405010];
 }
 
 #[no_mangle]
-fn update() {
+unsafe fn update() {
     // draw background
-    set_draw_colors(0x42);
+    *DRAW_COLORS = 0x41;
     rect(0, 0, SCREEN_SIZE, SCREEN_SIZE);
 
-    if left_pressed() {
-        let x = mouse_x() as u8;
-        let y = mouse_y() as u8;
+    // draw title
+    *DRAW_COLORS = 0x42;
+    rect(0, 0, SCREEN_SIZE, HEADER_HEIGHT as u32);
+    *DRAW_COLORS = 0x21;
+    text(TITLE.as_ptr(), TITLE.len(), 4, 5);
 
-        unsafe {
-            if !POINTS.contains(&(x, y)) {
-                POINTS.push((x, y));
-            }
+    // draw clear button
+    if (*MOUSE_BUTTONS & 0b001) != 0
+        && (*MOUSE_X > 107 && *MOUSE_X < 158)
+        && (*MOUSE_Y > 1 && *MOUSE_Y < 15)
+    {
+        *DRAW_COLORS = 0x44;
+        
+        POINTS.clear();
+    } else {
+        *DRAW_COLORS = 0x33;
+    }
+    rect(108, 2, 50, (HEADER_HEIGHT - 4) as u32);
+
+    *DRAW_COLORS = 0x01;
+    text(BUTTON.as_ptr(), BUTTON.len(), 114, 5);
+
+    if (*MOUSE_BUTTONS & 0b001) != 0 {
+        let x: u8 = *MOUSE_X as u8 / BLOCK_SIZE;
+        let y: u8 = *MOUSE_Y as u8 / BLOCK_SIZE;
+
+        // draw points
+        if (y > (HEADER_HEIGHT / BLOCK_SIZE) - 1) && !POINTS.contains(&(x, y)) {
+            POINTS.push((x, y));
         }
     }
 
-    set_draw_colors(0x44);
-    for (x, y) in points() {
-        rect((x - 1) as i32, (y - 1) as i32, 3, 3);
+    // draw content
+    *DRAW_COLORS = 0x33;
+    for (x, y) in POINTS.as_slice() {
+        rect(
+            (x * BLOCK_SIZE) as i32,
+            (y * BLOCK_SIZE) as i32,
+            BLOCK_SIZE as u32,
+            BLOCK_SIZE as u32,
+        );
     }
+
+    // draw over borders
+    *DRAW_COLORS = 0x40;
+    rect(0, 0, SCREEN_SIZE, HEADER_HEIGHT as u32);
+    rect(
+        0,
+        HEADER_HEIGHT as i32,
+        SCREEN_SIZE,
+        SCREEN_SIZE - HEADER_HEIGHT as u32,
+    );
 }
 
-fn points<'a>() -> &'a [(u8, u8)] {
-    unsafe { POINTS.as_slice() }
-}
-
-fn left_pressed() -> bool {
-    unsafe { (*MOUSE_BUTTONS & 0b001) != 0 }
-}
-
-fn mouse_x() -> i16 {
-    unsafe { *MOUSE_X }
-}
-
-fn mouse_y() -> i16 {
-    unsafe { *MOUSE_Y }
+extern "C" {
+    fn rect(x: i32, y: i32, width: u32, height: u32);
+    fn hline(x: i32, y: i32, length: usize);
+    #[link_name = "textUtf8"]
+    fn text(text: *const u8, length: usize, x: i32, y: i32);
 }
