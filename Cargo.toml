@@ -9,7 +9,7 @@ edition = "2021"
 crate-type = ["cdylib"]
 
 [dependencies]
-buddy-alloc = "0.4"
+heapless = "0.7"
 
 [profile.release]
 opt-level = "z"
